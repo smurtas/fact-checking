@@ -6,6 +6,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install netcat
+RUN apt-get update && apt-get install -y netcat-openbsd && apt-get clean
+
+RUN python -m spacy download en_core_web_sm
+
 COPY . .
 
-CMD ["python", "nlp.py"]
+CMD ["./wait-for-kafka.sh", "nlp.py"]

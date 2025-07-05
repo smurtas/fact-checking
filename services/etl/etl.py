@@ -2,6 +2,8 @@
 import json, os
 from kafka import KafkaConsumer, KafkaProducer
 import re
+import sys
+sys.stdout.reconfigure(line_buffering=True)
 
 def clean_text(text):
     text = re.sub(r'\s+', ' ', text)
@@ -12,7 +14,7 @@ consumer = KafkaConsumer(
     bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"),
     auto_offset_reset='earliest',
     enable_auto_commit=True,
-    group_id='etl-service',
+    group_id='etl-debug',
     value_deserializer=lambda x: json.loads(x.decode('utf-8'))
 )
 
@@ -25,4 +27,4 @@ for msg in consumer:
     doc = msg.value
     doc['cleaned_text'] = clean_text(doc.get('content', ''))
     producer.send('cleaned_doc', doc)
-    print(f"ETL: Pulito e inviato {doc['id']}")
+    print(f"ETL: Pulito e inviato {doc['id']}", flush=True)

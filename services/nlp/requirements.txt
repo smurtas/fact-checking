@@ -1,4 +1,6 @@
-sentence-transformers
 torch
-kafka-python
+transformers
+spacy
+sentence-transformers
 elasticsearch
+kafka-python

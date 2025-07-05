@@ -1,11 +1,13 @@
+#version: '3.8'
+
 services:
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
+    image: confluentinc/cp-zookeeper:7.2.1
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
 
   kafka:
-    image: confluentinc/cp-kafka:7.5.0
+    image: confluentinc/cp-kafka:7.2.1
     depends_on:
       - zookeeper
     ports:
@@ -13,64 +15,62 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
-  db:
-    image: postgres
-    environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: pass
-
   elasticsearch:
-    image: elasticsearch:8.5.0
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.12
     environment:
       - discovery.type=single-node
+      - xpack.security.enabled=false
     ports:
       - "9200:9200"
 
-  kibana:
-    image: kibana:8.5.0
-    ports:
-      - "5601:5601"
-
-  ingestion:
-    build: ./services/ingestion
-    environment:
-      - MEDIA_CLOUD_API_KEY=${MEDIA_CLOUD_API_KEY}
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-    depends_on:
-      - kafka
-
-  etl:
-    build: ./services/etl
-    environment:
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-    depends_on:
-      - kafka
-
-  nlp:
-    build: ./services/nlp
-    environment:
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - ELASTICSEARCH_HOST=elasticsearch:9200
-    depends_on:
-      - kafka
-      - elasticsearch
-
   api:
-    build: ./services/api
+    build:
+      context: ./services/api
     ports:
       - "8000:8000"
     depends_on:
-      - kafka
       - elasticsearch
+    env_file:
+      - .env
 
   frontend:
-    build: ./services/frontend
+    build:
+      context: ./services/frontend
     ports:
       - "8501:8501"
-    environment:
-      - API_URL=http://api:8000
     depends_on:
       - api
+    environment:
+      - API_URL=http://api:8000
+
+  ingestion:
+    build:
+      context: ./services/ingestion
+    depends_on:
+      - kafka
+    restart: on-failure # Restart on failure add to ensure reliability
+    env_file:
+      - .env
+    environment:
+      - NEWS_API_KEY=${NEWS_API_KEY}
+
+  etl:
+    build:
+      context: ./services/etl
+    depends_on:
+      - kafka
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+
+  nlp:
+    build:
+      context: ./services/nlp
+    depends_on:
+      - kafka
+      - elasticsearch
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092

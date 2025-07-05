@@ -6,6 +6,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Installa netcat per lo script di attesa
+RUN apt-get update && apt-get install -y netcat-openbsd && apt-get clean
+
+
 COPY . .
 
-CMD ["python", "ingestion.py"]
+CMD ["./wait-for-kafka.sh", "ingestion.py"]
