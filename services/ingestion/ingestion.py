@@ -1,26 +1,39 @@
-import requests, json, os, uuid
-from kafka import KafkaProducer
+import requests, json, os
+from kafka import KafkaProducer, KafkaConsumer
 from datetime import datetime
-from kafka.errors import KafkaTimeoutError  # Import KafkaTimeoutError for handling retries
-from time import sleep  # Import sleep for retry logic
+from kafka.errors import KafkaTimeoutError
+from time import sleep
+import hashlib
 import sys
-sys.stdout.reconfigure(line_buffering=True)# to get the message in stdout
+sys.stdout.reconfigure(line_buffering=True)
 
-# # This script fetches news articles from the News API and sends them to a Kafka topic.
 # Kafka Producer setup
-
 producer = KafkaProducer(
     bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"),
     value_serializer=lambda v: json.dumps(v).encode("utf-8")
 )
 
-def fetch_news(api_key, topic="election"):
+consumer = KafkaConsumer(
+    os.getenv("TOPIC_INPUT", "user_topic_request"),
+    bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"),
+    value_deserializer=lambda m: m.decode("utf-8"),
+    auto_offset_reset='earliest',
+    enable_auto_commit=True,
+    group_id="news-fetcher"
+)
+
+# Function to generate a unique ID for each article
+def generate_id(article):
+    unique_string = article["title"] + article["publishedAt"]
+    return hashlib.md5(unique_string.encode("utf-8")).hexdigest()
+
+def fetch_news(api_key, topic):
     url = "https://newsapi.org/v2/everything"
     params = {
         "q": topic,
         "language": "en",
         "sortBy": "publishedAt",
-        "pageSize": 10,
+        "pageSize": 100, # Adjust page size as needed - but newsApi has a limit of 100 per request in free tier
         "apiKey": api_key
     }
 
@@ -37,7 +50,7 @@ def fetch_news(api_key, topic="election"):
 
     return [
         {
-            "id": str(uuid.uuid4()),
+            "id": generate_id(a),
             "source": a["source"]["name"],
             "title": a["title"],
             "content": a.get("content", ""),
@@ -49,33 +62,25 @@ def fetch_news(api_key, topic="election"):
 def main():
     api_key = os.getenv("NEWS_API_KEY")
     if not api_key:
-        print("NEWS_API_KEY is missing from environment.")
+        print("❌ NEWS_API_KEY is missing from environment.")
         return
 
-    topic = os.getenv("NEWS_TOPIC", "misinformation")  # Optional env override
-    #articles = fetch_news(api_key, topic)
+    print("🟢 Ingestion service started. Waiting for topics...")
+    for message in consumer:
+        topic = message.value
+        print(f"📥 Received topic: {topic}")
 
-    # For testing purposes, we will use a static article
-    # Uncomment the line below to fetch real articles
-    # articles = fetch_news(api_key, topic)
-    # For now, we will use a static article to simulate the process
-    articles = [{
-        "id": str(uuid.uuid4()),
-        "source": "test",
-        "title": "Vaccine Misinformation",
-        "content": "The COVID-19 vaccine causes autism.",
-        "published_at": datetime.utcnow().isoformat(),
-        "language": "en"
-    }]
-    for article in articles:
-        for i in range(5):  # max 5 retries add to wait for Kafka
-            try:
-                producer.send("raw_news", article)
-                break
-            except KafkaTimeoutError:
-                print(f"Kafka timeout... retrying ({i+1}/5)", flush=True) # Retry logic 
-                sleep(2)
-    producer.flush()
+        articles = fetch_news(api_key, topic)
+
+        for article in articles:
+            for i in range(5):  # retry logic
+                try:
+                    producer.send("user_choice", article)  # it may be better to use a news.{topic} topic for a better scalability, but for now we decide to use a single topic
+                    break
+                except KafkaTimeoutError:
+                    print(f"Kafka timeout... retrying ({i+1}/5)", flush=True)
+                    sleep(2)
+        producer.flush()
 
 if __name__ == "__main__":
     main()

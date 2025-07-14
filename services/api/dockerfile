@@ -9,7 +9,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir torch transformers
 
 
-COPY . .
+COPY . /app
+
+RUN chmod +x wait-for-kafka.sh
+
+ENV PYTHONPATH="${PYTHONPATH}:/app/.."
+
+# Make wait script executable
+RUN chmod +x wait-for-kafka.sh
 
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+#CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD [ "./wait-for-kafka.sh", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

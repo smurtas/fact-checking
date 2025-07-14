@@ -4,3 +4,4 @@ spacy
 sentence-transformers
 elasticsearch
 kafka-python
+sentencepiece

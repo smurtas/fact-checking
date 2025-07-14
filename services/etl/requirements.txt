@@ -1,3 +1,3 @@
-pandas
-nltk
+#pandas
+#nltk
 kafka-python

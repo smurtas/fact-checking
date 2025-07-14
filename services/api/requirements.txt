@@ -3,3 +3,7 @@ uvicorn
 kafka-python
 elasticsearch
 httpx
+transformers
+protobuf
+tiktoken
+sentencepiece

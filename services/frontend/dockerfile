@@ -8,6 +8,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install dependencies
 RUN pip install --no-cache-dir torch transformers
 
+ENV DOCKER=1
+
 
 COPY . .
 
