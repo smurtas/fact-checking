@@ -19,15 +19,15 @@ This is a full-stack big data system for real-time fact-checking of news article
 
 ## 🧱 Architecture
 
-**A [News APIs] --> B[Kafka Ingestion]**
-**B --> C[ETL & Cleaning]**
-**C --> D[NLP Pipeline (spaCy, RoBERTa, DeBERTa)]**
-**D --> E[Elasticsearch]**
-**D --> F[Kafka Manual Results]**
-**F --> G[FastAPI Backend]**
-**G --> H[Google Fact Check API]**
-**G --> I[DuckDB History DB]**
-**G --> J[Streamlit Frontend]**
+- **A [News APIs] --> B[Kafka Ingestion]**
+- **B --> C[ETL & Cleaning]**
+- **C --> D[NLP Pipeline (spaCy, RoBERTa, DeBERTa)]**
+- **D --> E[Elasticsearch]**
+- **D --> F[Kafka Manual Results]**
+- **F --> G[FastAPI Backend]**
+- **G --> H[Google Fact Check API]**
+- **G --> I[DuckDB History DB]**
+- **G --> J[Streamlit Frontend]**
 
 ---
 
