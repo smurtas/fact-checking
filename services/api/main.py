@@ -2,18 +2,22 @@ from fastapi import FastAPI, Query, Request, HTTPException
 from elasticsearch import Elasticsearch
 import httpx
 import os
+import sys
 #import torch
 import json
 #from transformers import RobertaTokenizer, RobertaForSequenceClassification , DebertaV2Tokenizer
 from pydantic import BaseModel
-from kafka import KafkaProducer
-from fetch_news import router as fetch_news_router
+from kafka import KafkaProducer, KafkaConsumer
+from .fetch_news import router as fetch_news_router
 import time
+import uuid
+from services.database.claims_db import save_check , init_db # to save the claim check results
+
 #from fastapi.middleware.cors import CORSMiddleware # to allow CORS requests from frontend 
 # to be impreved, we should use a more secure way to handle CORS in production
 
 #from transformers import AutoTokenizer, AutoModelForSequenceClassification
-
+init_db()
 
 # === DeBERTa model  to be removed===
 
@@ -141,6 +145,9 @@ async def check_claim_kafka(data: ClaimRequest):
     result = wait_for_nlp_response(claim_id, timeout)
     if not result:
         raise HTTPException(status_code=504, detail="No response from NLP in time")
+    
+    save_check(data.claim, result.get("label"), "roberta + deberta")  # save the result to the duckdb
+
     return result
 
 def wait_for_nlp_response(claim_id, timeout=10):

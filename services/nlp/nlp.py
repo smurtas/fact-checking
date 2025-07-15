@@ -6,6 +6,7 @@ import torch
 from transformers import RobertaTokenizer, RobertaForSequenceClassification
 from transformers import DebertaV2Tokenizer, DebertaV2ForSequenceClassification
 import json, os, sys
+import threading
 
 # Flush stdout logs immediately
 sys.stdout.reconfigure(line_buffering=True)
@@ -83,113 +84,172 @@ producer = KafkaProducer(
 )
 
 # Main pipeline
-for msg in consumer:
-    doc = msg.value
-    content = doc.get('content', '')
-    embedding = embedding_model.encode(doc.get('cleaned_text', '')).tolist()
-
-    # Sentence extraction
-    spacy_doc = nlp_spacy(content)
-    sentences = [sent.text.strip() for sent in spacy_doc.sents if len(sent.text.strip()) > 20]
-
-    # Apply fact-checking models
-    # Use DeBERTa for initial claim scoring
- 
-    # Step 1: run DeBERTa on all
-    deberta_results = score_claims_with_deberta(sentences, content)
-
-    # Step 2: run RoBERTa only on flagged ones
-    suspect_sentences = [c["text"] for c in deberta_results if c["label"] == 0]
-
-    # Run RoBERTa only if needed
-    if suspect_sentences:
-        roberta_results = score_claims_with_roberta(suspect_sentences, content)
-    else:
-        roberta_results = []
-
-    # Flagged claims (label == 0 means likely false)
-    flagged_by_roberta = [c for c in roberta_results if c["label"] == 0]
-    flagged_by_deberta = [c for c in deberta_results if c["label"] == 0]
-
-    # Merge flagged claims (remove duplicates by text)
-    flagged_claims = list({c["text"]: c for c in roberta_results + [
-        c for c in deberta_results if c["label"] == 0
-    ]}.values())
-
-    # Build result
-    nlp_output = {
-        "id": doc["id"],
-        "title": doc["title"],
-        "content": content,
-        "published_at": doc.get("published_at", ""),
-        "embedding": embedding,
-        "language": doc.get("language", "en"),
-        "flagged_claims": flagged_claims,
-        "debug": {
-            "deberta": deberta_results,
-            "roberta": roberta_results
-        }
-    }
-
-    # Send to Kafka
-    producer.send("nlp_output", nlp_output)
-
-    # Store in Elasticsearch
-    try:
-        es.index(index="news_facts", id=doc["id"], body=nlp_output)
-        print(f"NLP: {doc['id']} - {len(flagged_claims)} false claims flagged", flush=True)
-    except Exception as e:
-        print(f"❌ Indexing error for {doc['id']}: {e}", flush=True)
-
-    consumer = KafkaConsumer("manual_claims", ...)
-    producer = KafkaProducer(...)
-
+def handle_cleaned_doc():
     for msg in consumer:
+        doc = msg.value
+        content = doc.get('content', '')
+        embedding = embedding_model.encode(doc.get('cleaned_text', '')).tolist()
+
+        # Sentence extraction
+        spacy_doc = nlp_spacy(content)
+        sentences = [sent.text.strip() for sent in spacy_doc.sents if len(sent.text.strip()) > 20]
+
+        # Apply fact-checking models
+        # Use DeBERTa for initial claim scoring
+    
+        # Step 1: run DeBERTa on all
+        deberta_results = score_claims_with_deberta(sentences, content)
+
+        # Step 2: run RoBERTa only on flagged ones
+        suspect_sentences = [c["text"] for c in deberta_results if c["label"] == 0]
+
+        # Run RoBERTa only if needed
+        if suspect_sentences:
+            roberta_results = score_claims_with_roberta(suspect_sentences, content)
+        else:
+            roberta_results = []
+
+        # Flagged claims (label == 0 means likely false)
+        flagged_by_roberta = [c for c in roberta_results if c["label"] == 0]
+        flagged_by_deberta = [c for c in deberta_results if c["label"] == 0]
+
+        # Merge flagged claims (remove duplicates by text)
+        flagged_claims = list({c["text"]: c for c in roberta_results + [
+            c for c in deberta_results if c["label"] == 0
+        ]}.values())
+
+        # Build result
+        nlp_output = {
+            "id": doc["id"],
+            "title": doc["title"],
+            "content": content,
+            "published_at": doc.get("published_at", ""),
+            "embedding": embedding,
+            "language": doc.get("language", "en"),
+            "flagged_claims": flagged_claims,
+            "debug": {
+                "deberta": deberta_results,
+                "roberta": roberta_results
+            }
+        }
+
+        # Send to Kafka
+        producer.send("nlp_output", nlp_output)
+
+        # Store in Elasticsearch
+        try:
+            es.index(index="news_facts", id=doc["id"], body=nlp_output)
+            print(f"NLP: {doc['id']} - {len(flagged_claims)} false claims flagged", flush=True)
+        except Exception as e:
+            print(f"❌ Indexing error for {doc['id']}: {e}", flush=True)
+
+        # consumer = KafkaConsumer("manual_claims", ...)
+        # producer = KafkaProducer(...)
+
+        # for msg in consumer:
+        #     claim = msg.value
+        #     result = {
+        #         "id": claim["id"],
+        #         "text": claim["claim"],
+        #         "label": ...,  # risultato finale
+        #         "model": "roberta + deberta"
+        #     }
+        #     producer.send("manual_results", result)
+
+# manual_consumer = KafkaConsumer(
+#     'manual_claims',
+#     bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"),
+#     auto_offset_reset='earliest',
+#     enable_auto_commit=True,
+#     group_id='nlp-manual',
+#     value_deserializer=lambda x: json.loads(x.decode('utf-8'))
+# )
+
+# for msg in manual_consumer:
+#     claim = msg.value
+#     claim_text = claim["claim"]
+#     evidence = claim.get("evidence", "")
+
+#     # Apply DeBERTa
+#     deberta_x = deberta_tokenizer.encode_plus(claim_text, evidence, return_tensors="pt", truncation=True)
+#     with torch.no_grad():
+#         deberta_pred = deberta_model(**deberta_x)
+#         deberta_label = torch.argmax(deberta_pred.logits, dim=1).item()
+
+#     # Apply RoBERTa
+#     roberta_x = tokenizer.encode_plus(claim_text, evidence, return_tensors="pt", truncation=True)
+#     with torch.no_grad():
+#         roberta_pred = fact_model(**roberta_x)
+#         roberta_label = torch.argmax(roberta_pred.logits, dim=1).item()
+
+#     final_label = 0 if deberta_label == 0 or roberta_label == 0 else 1
+
+#     result = {
+#         "id": claim["id"],
+#         "claim": claim_text,
+#         "label": final_label,
+#         "models": {
+#             "deberta": deberta_label,
+#             "roberta": roberta_label
+#         }
+#     }
+
+    # producer.send("manual_results", result)
+    # print(f"NLP → ✅ Result for manual claim {claim['id']} sent", flush=True)
+
+
+def handle_manual_claims():
+    manual_consumer = KafkaConsumer(
+        'manual_claims',
+        bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"),
+        auto_offset_reset='earliest',
+        enable_auto_commit=True,
+        group_id='nlp-manual',
+        value_deserializer=lambda x: json.loads(x.decode('utf-8'))
+    )
+
+    print("✅ NLP manual claim listener ready", flush=True)
+    for msg in manual_consumer:
         claim = msg.value
+        claim_text = claim["claim"]
+        evidence = claim.get("evidence", "") or claim_text  # fallback
+
+        # DeBERTa
+        deberta_x = deberta_tokenizer.encode_plus(claim_text, evidence, return_tensors="pt", truncation=True)
+        with torch.no_grad():
+            deberta_pred = deberta_model(**deberta_x)
+            deberta_label = torch.argmax(deberta_pred.logits, dim=1).item()
+
+        # RoBERTa
+        roberta_x = tokenizer.encode_plus(claim_text, evidence, return_tensors="pt", truncation=True)
+        with torch.no_grad():
+            roberta_pred = fact_model(**roberta_x)
+            roberta_label = torch.argmax(roberta_pred.logits, dim=1).item()
+
+        final_label = 0 if deberta_label == 0 or roberta_label == 0 else 1
+
         result = {
             "id": claim["id"],
-            "text": claim["claim"],
-            "label": ...,  # risultato finale
-            "model": "roberta + deberta"
+            "claim": claim_text,
+            "label": final_label,
+            "models": {
+                "deberta": deberta_label,
+                "roberta": roberta_label
+            }
         }
+
         producer.send("manual_results", result)
-manual_consumer = KafkaConsumer(
-    'manual_claims',
-    bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"),
-    auto_offset_reset='earliest',
-    enable_auto_commit=True,
-    group_id='nlp-manual',
-    value_deserializer=lambda x: json.loads(x.decode('utf-8'))
-)
+        print(f"📤 NLP sent result for manual claim {claim['id']}", flush=True)
 
-for msg in manual_consumer:
-    claim = msg.value
-    claim_text = claim["claim"]
-    evidence = claim.get("evidence", "")
 
-    # Apply DeBERTa
-    deberta_x = deberta_tokenizer.encode_plus(claim_text, evidence, return_tensors="pt", truncation=True)
-    with torch.no_grad():
-        deberta_pred = deberta_model(**deberta_x)
-        deberta_label = torch.argmax(deberta_pred.logits, dim=1).item()
+if __name__ == "__main__":
+    print("🚀 Starting NLP microservice listeners...", flush=True)
 
-    # Apply RoBERTa
-    roberta_x = tokenizer.encode_plus(claim_text, evidence, return_tensors="pt", truncation=True)
-    with torch.no_grad():
-        roberta_pred = fact_model(**roberta_x)
-        roberta_label = torch.argmax(roberta_pred.logits, dim=1).item()
+    t1 = threading.Thread(target=handle_cleaned_doc)
+    t2 = threading.Thread(target=handle_manual_claims)
 
-    final_label = 0 if deberta_label == 0 or roberta_label == 0 else 1
+    t1.start()
+    t2.start()
 
-    result = {
-        "id": claim["id"],
-        "claim": claim_text,
-        "label": final_label,
-        "models": {
-            "deberta": deberta_label,
-            "roberta": roberta_label
-        }
-    }
-
-    producer.send("manual_results", result)
-    print(f"NLP → ✅ Result for manual claim {claim['id']} sent", flush=True)
+    t1.join()
+    t2.join()

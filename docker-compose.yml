@@ -37,12 +37,14 @@ services:
   api:
     container_name: api  # force a specific container name for easier management
     build:
-      context: ./services/api
+      context: .
+      dockerfile: services/api/Dockerfile
     ports:
       - "8000:8000"
     depends_on:
       - kafka
       - elasticsearch
+      - database
     restart: on-failure # Restart on failure add to ensure reliability
     env_file:
       - .env
@@ -53,18 +55,22 @@ services:
 
   frontend:
     build:
-      context: ./services/frontend
+      context: .
+      dockerfile: services/frontend/Dockerfile
     ports:
       - "8501:8501"
+    working_dir: /app/services/frontend
     depends_on:
       - api
+      - database
     environment:
       - API_URL=http://api:8000
       - DOCKER=true # Set to 1 to indicate running in Docker
     networks:
       - default
     volumes:
-      - ./services/frontend:/app
+      - ./services/frontend:/app/services/frontend
+      - ./services/frontend:/app.py:/app/app.py # Ensure the app.py is correctly mounted
 
   ingestion:
     build:
@@ -103,6 +109,18 @@ services:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
     networks:
       - default
+
+
+  database:
+    build:
+      context: ./services/database
+    container_name: database
+    volumes:
+      - ./services/database:/app
+    entrypoint: ["tail", "-f", "/dev/null"]
+    networks:
+      - default
+
       
 
 networks:

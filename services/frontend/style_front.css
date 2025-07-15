@@ -1,0 +1,44 @@
+/* Container for tab */
+.stTabs [role="tablist"] {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem; /* usa gap al posto di margin-right */
+}
+
+/* tab style */
+.stTabs [role="tab"] {
+    flex: 1 1 0;
+    text-align: center;
+    padding: 2.5rem 1rem;
+    background-color: #f0f2f6;
+    border-radius: 6px 6px 0 0;
+    border: 1px solid #ccc;
+    color: #333;
+    font-weight: 500;
+    font-size: 24px !important;
+    overflow-wrap: anywhere;
+    transition: background-color 0.3s, color 0.3s;
+    white-space: nowrap; 
+}
+
+/* button of the tabs */
+button[data-baseweb="tab"] > div[data-testid="stMarkdownContainer"] > p {
+    font-size: 24px; 
+    font-weight: 500;
+    color: #444;
+    margin: 0;
+}
+
+/* Tab attivo */
+.stTabs [aria-selected="true"] {
+    background-color: #1a73e8;
+    color: white;
+    font-weight: bold;
+    border-bottom: 3px solid #0e1117;
+}
+
+/* Hover */
+.stTabs [role="tab"]:not([aria-selected="true"]):hover {
+    background-color: #dce6f9;
+    cursor: pointer;
+}
