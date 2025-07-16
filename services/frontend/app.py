@@ -221,7 +221,7 @@ with tab2:
         try:
             clear_history()
             st.success("✅ History cleared successfully.")
-            st.experimental_rerun()
+            st.rerun()
         except Exception as e:  
             st.error(f"❌ Failed to clear history: {e}")
 
