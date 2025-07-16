@@ -6,6 +6,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN apt-get update && apt-get install -y libsentencepiece-dev
 
+# Install required packages for training
+RUN pip install datasets accelerate scikit-learn
+
+# Copy the training script into the container
+COPY deberta_fine_tune.sh /app/deberta_fine_tune.sh
+RUN chmod +x /app/deberta_fine_tune.sh
 
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir sentencepiece

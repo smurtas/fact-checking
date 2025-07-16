@@ -42,3 +42,23 @@ button[data-baseweb="tab"] > div[data-testid="stMarkdownContainer"] > p {
     background-color: #dce6f9;
     cursor: pointer;
 }
+
+/* hint for the Claim */
+/* bigger field label */
+.custom-claim-input label {
+    font-size: 24px !important;
+    font-weight: 600;
+    color: #222;
+    margin-bottom: 0.5rem;
+    display: block;
+}
+
+/* Bigger field input */
+.custom-claim-input input {
+    font-size: 22px !important;
+    padding: 0.75rem 1rem !important;
+    height: auto !important;
+    width: 100% !important;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+}

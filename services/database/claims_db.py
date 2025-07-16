@@ -37,3 +37,8 @@ def load_history():
     con.close()
     return df
    
+# Clear the history table
+def clear_history():
+    con = duckdb.connect(DB_PATH)
+    con.execute("DELETE FROM history")
+    con.close()

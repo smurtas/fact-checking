@@ -6,7 +6,7 @@ import time
 import torch
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from services.database.claims_db import save_check, init_db, load_history
+from services.database.claims_db import save_check, init_db, load_history, clear_history
 
 def local_css(file_name):
     with open(file_name) as f:
@@ -17,6 +17,10 @@ local_css("style_front.css")
 
 st.set_page_config(page_title="Fact Checking Dashboard", layout="wide")
 st.title("Fact Checking Dashboard")
+
+if "claim_checked" not in st.session_state:
+    st.session_state.claim_checked = False
+
 
 init_db()
 
@@ -40,84 +44,148 @@ language = "en"
 with tab1:
     st.header("Verify a Claim")
 
-    claim_query = st.text_input("Enter a claim to verify")
-    if st.button("Check Claim"):
-        try:
-            # Google Fact Check API URL
-            fc_res = requests.get(f"{api_url}/fact-check", params={"query": claim_query, "languageCode": language})
-            fc_res.raise_for_status()
-            data = fc_res.json()
+    with st.container():
+        st.markdown("<div class='custom-claim-input'>", unsafe_allow_html=True)
+        claim_query = st.text_input(
+            "Enter a claim to verify",
+            placeholder="e.g. 'The Earth is flat.'",
+            key="claim_input",
+            help="Type a claim you want to verify. The system will first check with Google Fact Check Tools API, and if no verified claims are found, it will use internal AI models (DeBERTa + RoBERTa) for automated verification.",
+            label_visibility="collapsed"
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+        if st.button("Check Claim"):
+            claim_query = st.session_state.get("claim_input", "")
+            if claim_query:
+       
 
- 
-            #Google Fact Check API response
-            if "claims" in data and data["claims"]:
-                # Check if any claim exactly matches the query
-                exact_match_found = any(claim_query.lower() in c["text"].lower() for c in data["claims"])
+            #use_nlp = False
 
-                if not exact_match_found:
-                    st.success(f"🟢 No specific fact-check was found for: **\"{claim_query}\"**.\n\nIt may be true or unverified.")
-                    st.markdown("But we found related fact-checked claims:")
+                try:
+                    # Google Fact Check API URL
+                    with st.spinner("🔍 Checking your claim... Please wait..."):
+                        fc_res = requests.get(f"{api_url}/fact-check", 
+                                            params={"query": claim_query, "languageCode": language}, 
+                                            timeout=5)# add a timeout to avoid long waits
+                        fc_res.raise_for_status()
+                        data = fc_res.json()
 
-                else:
-                    st.info(f"🔍 Here are fact-checks related to your claim: **\"{claim_query}\"**")
+        
+                    #Google Fact Check API response
+                    if "claims" in data and data["claims"]:
+                        # Check if any claim exactly matches the query
+                        exact_match_found = any(claim_query.lower() in c["text"].lower() for c in data["claims"])
+                        st.caption("""
+                            ℹ️ The system first checks with the Google Fact Check Tools API.
+                            If no verified claims are found, it uses internal AI models (DeBERTa + RoBERTa) for automated verification.
+                            """)
+                        if not exact_match_found:
+                            st.success(f"🟢 No specific fact-check was found for: **\"{claim_query}\"**.\n\nIt may be true or unverified.")
+                            st.markdown("But we found related fact-checked claims:")
 
-                
-                for c in data["claims"]:
-                    st.subheader(f"Claim: {c['text']}")
-                    for review in c.get("claimReview", []):
-                        st.markdown(f"- **Rating**: `{review.get('textualRating')}`")
-                        st.markdown(f"- **Publisher**: {review.get('publisher', {}).get('name')}")
-                        st.markdown(f"[🔗 Full Review]({review.get('url')})")
-                    # save in DuckDB
-                    rating = review.get("textualRating", "").lower()
-                    if "true" in rating or "correct" in rating:
-                        label = 1
-                    else: 
-                        label = 0
+                        else:
+                            st.info(f"🔍 Here are fact-checks related to your claim: **\"{claim_query}\"**")
+
+                        
+                        for c in data["claims"]:
+                            st.subheader(f"Claim: {c['text']}")
+                            for review in c.get("claimReview", []):
+                                st.markdown(f"- **Rating**: `{review.get('textualRating')}`")
+                                st.markdown(f"- **Publisher**: {review.get('publisher', {}).get('name')}")
+                                st.markdown(f"[🔗 Full Review]({review.get('url')})")
+                            # save in DuckDB
+                            rating = review.get("textualRating", "").lower()
+                            if "true" in rating or "correct" in rating:
+                                label = 1
+                            else: 
+                                label = 0
+                            
+
+                            if label in (0, 1):  
+                                save_check(c['text'], label, "google fact-check")
+                            st.markdown("---")
+                    else:
+                        #st.warning(f"No fact-checks found for: **\"{claim_query}\"**")
+                        st.warning("❌ No fact-check results found from Google.")
+
+                        st.info("🔄 Switching to internal AI models (DeBERTa + RoBERTa) to verify the claim.")
+
+                        # 2. Use Kafka + NLP pipeline
+                        st.write("📡 Sending claim to NLP pipeline...")
+                        try:
+                            with st.spinner("🔍 Checking your claim... Please wait..."):
+                                response = requests.post(f"{api_url}/check-claim-kafka", json={"claim": claim_query})   
+                                st.write("📡 NLP response received.")
+                                st.write(f"📡 NLP HTTP status: {response.status_code}")
+                                response.raise_for_status()
+                        except requests.RequestException as e:
+                            st.error(f"❌ Error sending claim to NLP pipeline: {e}")
+                            st.stop()
+                        result = response.json()
+
+                        label = result.get("label")
+                        if label is None:
+                            st.error("❌ No label found in NLP response.")
+                            st.json(result)
+                            st.stop()
+                        label = result.get("label")
+                        deberta_label = result["models"]["deberta"]
+                        roberta_label = result["models"]["roberta"]
+
+                        # Logic to determine the final label based on DeBERTa and RoBERTa outputs
+                        # priority to DeBERTa
+                        # - Both 0 → label = 0
+                        # - DeBERTa = 0, RoBERTa = 1 → label = 0
+                        # - DeBERTa = 1, RoBERTa = 0 → label = 1
+                        # - Both 1 → label = 1
+
+                        if deberta_label == 1:
+                            label = 1
+                        else:
+                            label = 0
+
+                        if label == 1 and roberta_label == 0:
+                            st.success("⚠️ Our AI models predict this claim is likely **TRUE**.")
+                            st.write("⚠️ But be aware DeBERTa model suggests this claim is likely **False**.")
+                        elif label == 0 and roberta_label == 1:
+                            st.warning("⚠️ Our AI models predict this claim is likely **FALSE**.")
+                            st.write("⚠️ But be aware DeBERTa model suggests this claim is likely **True**.")
+                        elif label == 1 and roberta_label == 1:
+                            st.success("✅ Our AI models suggest this claim is likely **TRUE**.")
+                        elif label == 0 and roberta_label == 0:
+                            st.error("❌ Our AI models suggest this claim is likely **FALSE**.")
+                        else:
+                            st.error("❌ Our AI models suggest this claim is likely **FALSE**.")
+
+                        st.caption("🧠 Model Details:")
+                        st.markdown(f"- **DeBERTa**: {'True' if deberta_label == 1 else 'False'}")
+                        st.markdown(f"- **RoBERTa**: {'True' if roberta_label == 1 else 'False'}")
+                        st.write(f"🔍 NLP label = {label}")
+                        # Save the claim check result to the database
+                        save_check(claim_query, label, "roberta+deberta")
+                        
                     
 
-                    if label in (0, 1):  
-                        save_check(c['text'], label, "google fact-check")
-                    st.markdown("---")
-            else:
-                #st.warning(f"No fact-checks found for: **\"{claim_query}\"**")
-                st.warning("❌ No results from Google. Using DeBERTa + RoBERTa instead...")
-
-                # 2. Use Kafka + NLP pipeline
-                st.write("📡 Sending claim to NLP pipeline...")
-                try:
-                    response = requests.post(f"{api_url}/check-claim-kafka", json={"claim": claim_query})   
-                    st.write("📡 NLP response received.")
-                    st.write(f"📡 NLP HTTP status: {response.status_code}")
-                    response.raise_for_status()
-                except requests.RequestException as e:
-                    st.error(f"❌ Error sending claim to NLP pipeline: {e}")
-                    st.stop()
-                result = response.json()
-
-                label = result.get("label")
-                if label is None:
-                    st.error("❌ No label found in NLP response.")
-                    st.json(result)
-                    st.stop()
-                st.code(result, language="json")  # show raw result for debugging
-                st.write(f"🔍 NLP label = {label}")
-                # Save the claim check result to the database
-                save_check(claim_query, label, "roberta+deberta")
-
-                if label == 1:
-                    st.success("✅ NLP (DeBERTa + RoBERTa) predicts this claim is likely **True**")
-                else:
-                    st.error("❌ NLP (DeBERTa + RoBERTa) predicts this claim is likely **False**")
-                
+                        # if label == 1:
+                        #     st.success("✅ NLP (DeBERTa + RoBERTa) predicts this claim is likely **True**")
+                        # else:
+                        #     st.error("❌ NLP (DeBERTa + RoBERTa) predicts this claim is likely **False**")
 
 
+                        # st.caption("🧠 NLP model outputs (debug):")
+                        # st.json(result)
 
-                st.caption("🧠 NLP model outputs (debug):")
-                st.json(result)
-        except Exception as e:
-            st.error(f"Error checking claim: {e}")
-
+                except requests.exceptions.Timeout:
+                    st.warning("⏳ Google Fact Check API timed out.")
+                    use_nlp = True
+                except Exception as e:
+                    st.error(f"Error checking claim: {e}")
+                            # Button to new check 
+            # if st.button("🔁 New Check"):
+            #     st.session_state.claim_checked = False
+            #     if "claim_input" in st.session_state:
+            #         del st.session_state["claim_input"]
+            #     st.rerun()
 
 # Display the current API URL in the sidebar
 #st.sidebar.markdown(f"🌐 API_URL: `{api_url}`")
@@ -141,8 +209,21 @@ with tab2:
             st.dataframe(history_df)
             # Optional: export to CSV
             st.download_button("⬇️ Download CSV", history_df.to_csv(index=False), "history.csv", "text/csv")
+    
+
     except Exception as e:
         st.error(f"Error loading history: {e}")
+    
+    # Clear history button
+    st.subheader("Clear History")
+
+    if st.button("🗑️ Clear All History"):
+        try:
+            clear_history()
+            st.success("✅ History cleared successfully.")
+            st.experimental_rerun()
+        except Exception as e:  
+            st.error(f"❌ Failed to clear history: {e}")
 
 #st.header("Latest News")
 with tab3:

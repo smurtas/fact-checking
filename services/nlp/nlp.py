@@ -8,6 +8,11 @@ from transformers import DebertaV2Tokenizer, DebertaV2ForSequenceClassification
 import json, os, sys
 import threading
 
+
+# Set device: GPU if available, else CPU
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#print(f"Using device: {device}")
+
 # Flush stdout logs immediately
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -226,8 +231,30 @@ def handle_manual_claims():
             roberta_pred = fact_model(**roberta_x)
             roberta_label = torch.argmax(roberta_pred.logits, dim=1).item()
 
-        final_label = 0 if deberta_label == 0 or roberta_label == 0 else 1
+        #final_label = 0 if deberta_label == 0 or roberta_label == 0 else 1
 
+        # Give priority to DeBERTa, if it says false, we trust it
+        if deberta_label == 0 and roberta_label == 0:
+            final_label = 0
+            reason = "❌ Both models predicted False"
+        elif deberta_label != roberta_label:
+            final_label = 0
+            reason = f"⚠️ Conflict: DeBERTa={deberta_label}, RoBERTa={roberta_label}. Defaulting to False."
+        else:
+            final_label = 1
+            reason = "✅ Both models predicted True"
+
+
+
+        # result = {
+        #     "id": claim["id"],
+        #     "claim": claim_text,
+        #     "label": final_label,
+        #     "models": {
+        #         "deberta": deberta_label,
+        #         "roberta": roberta_label
+        #     }
+        # }
         result = {
             "id": claim["id"],
             "claim": claim_text,
@@ -235,7 +262,8 @@ def handle_manual_claims():
             "models": {
                 "deberta": deberta_label,
                 "roberta": roberta_label
-            }
+            },
+            "reason": reason  # Optional, for better debugging/logging
         }
 
         producer.send("manual_results", result)
