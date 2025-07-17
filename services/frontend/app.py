@@ -141,20 +141,20 @@ with tab1:
                     # - DeBERTa = 1, RoBERTa = 0 → label = 1
                     # - Both 1 → label = 1
 
-                    if deberta_label == 1:
+                    if roberta_label == 1:
                         label = 1
                     else:
                         label = 0
 
-                    if label == 1 and roberta_label == 0:
+                    if label == 1 and deberta_label == 0:
                         st.success("⚠️ Our AI models predict this claim is likely **TRUE**.")
                         st.write("⚠️ But be aware DeBERTa model suggests this claim is likely **False**.")
-                    elif label == 0 and roberta_label == 1:
+                    elif label == 0 and deberta_label == 1:
                         st.warning("⚠️ Our AI models predict this claim is likely **FALSE**.")
                         st.write("⚠️ But be aware DeBERTa model suggests this claim is likely **True**.")
-                    elif label == 1 and roberta_label == 1:
+                    elif label == 1 and deberta_label == 1:
                         st.success("✅ Our AI models suggest this claim is likely **TRUE**.")
-                    elif label == 0 and roberta_label == 0:
+                    elif label == 0 and deberta_label == 0:
                         st.error("❌ Our AI models suggest this claim is likely **FALSE**.")
                     else:
                         st.error("❌ Our AI models suggest this claim is likely **FALSE**.")

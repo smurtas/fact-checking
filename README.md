@@ -9,7 +9,7 @@ This is a full-stack big data system for real-time fact-checking of news article
 
 - **News ingestion**  via Kafka pipelines.
 - **Claim detection** using spaCy and rule-based logic.
-- **Fact classification** using fine-tuned [DeBERTa](https://huggingface.co/microsoft/deberta-v3-large) [RoBERTa](https://huggingface.co/Dzeniks/roberta-fact-check).
+- **Fact classification** using fine-tuned [RoBERTa](https://huggingface.co/Dzeniks/roberta-fact-check) (primary model) and [DeBERTa](https://huggingface.co/microsoft/deberta-v3-large) (secondary).
 - **Cross-verification** using Google Fact Check Tools API.
 - **Elasticsearch indexing** for fast search and article retrieval.
 - **Streamlit frontend** with search, filters, and multilingual support.
@@ -86,10 +86,18 @@ Core Features in Tabs:
 - Load Filterd News: get news articles by topic & language, with predictions
 
 ## 🤖 Models Used
-- Dzeniks/roberta-fact-check
-- microsoft/deberta-v3-large
-- spaCy NLP pipeline (en_core_web_sm) for sentence splitting
+- [`Dzeniks/roberta-fact-check`](https://huggingface.co/Dzeniks/roberta-fact-check) – primary model for claim verification.
+- [`microsoft/deberta-v3-large`](https://huggingface.co/microsoft/deberta-v3-large) – secondary model for cross-checking.
+- spaCy `en_core_web_sm` – sentence splitting and linguistic preprocessing.
 
+Both models can be further fine-tuned on factual consistency datasets like [FEVER](https://fever.ai/dataset/fever.html) to improve domain-specific accuracy.
+
+The training pipeline follows the Hugging Face Transformers example for [text classification](https://github.com/huggingface/transformers/tree/main/examples/pytorch/text-classification), using Trainer API, mixed precision, and multi-GPU support where available.
+
+Custom training on FEVER includes:
+- pairing claims with evidence sentences,
+- training binary classifiers (supported vs. refuted),
+- optimizing for factual entailment.
 
 ## 🧪 Testing
 To manually test the system:
