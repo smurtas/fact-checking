@@ -172,3 +172,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+
+# Finetuning and NLP specific files
+*.safetensors
+*.pt
+*.bin
+*.wandb
+services/nlp/ds_results/
+services/nlp/wandb/
