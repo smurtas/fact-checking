@@ -105,76 +105,80 @@ with tab1:
                                 save_check(c['text'], label, "google fact-check")
                             st.markdown("---")
                     else:
-                        #st.warning(f"No fact-checks found for: **\"{claim_query}\"**")
-                        st.warning("❌ No fact-check results found from Google.")
+                        raise ValueError("No claims found in Google response")
+                except Exception as e:
+                    #st.warning(f"No fact-checks found for: **\"{claim_query}\"**")
+                    st.warning("❌ No fact-check results found from Google.")
 
-                        st.info("🔄 Switching to internal AI models (DeBERTa + RoBERTa) to verify the claim.")
+                    st.info("🔄 Switching to internal AI models (DeBERTa + RoBERTa) to verify the claim.")
 
-                        # 2. Use Kafka + NLP pipeline
-                        st.write("📡 Sending claim to NLP pipeline...")
-                        try:
-                            with st.spinner("🔍 Checking your claim... Please wait..."):
-                                response = requests.post(f"{api_url}/check-claim-kafka", json={"claim": claim_query})   
-                                st.write("📡 NLP response received.")
-                                st.write(f"📡 NLP HTTP status: {response.status_code}")
-                                response.raise_for_status()
-                        except requests.RequestException as e:
-                            st.error(f"❌ Error sending claim to NLP pipeline: {e}")
-                            st.stop()
-                        result = response.json()
+                    # 2. Use Kafka + NLP pipeline
+                    st.write("📡 Sending claim to NLP pipeline...")
+                    try:
+                        with st.spinner("🔍 Checking your claim... Please wait..."):
+                            response = requests.post(f"{api_url}/check-claim-kafka", json={"claim": claim_query})   
+                            st.write("📡 NLP response received.")
+                            st.write(f"📡 NLP HTTP status: {response.status_code}")
+                            response.raise_for_status()
+                    except requests.RequestException as e:
+                        st.error(f"❌ Error sending claim to NLP pipeline: {e}")
+                        st.stop()
+                    result = response.json()
 
-                        label = result.get("label")
-                        if label is None:
-                            st.error("❌ No label found in NLP response.")
-                            st.json(result)
-                            st.stop()
-                        label = result.get("label")
-                        deberta_label = result["models"]["deberta"]
-                        roberta_label = result["models"]["roberta"]
+                    label = result.get("label")
+                    if label is None:
+                        st.error("❌ No label found in NLP response.")
+                        st.json(result)
+                        st.stop()
+                    label = result.get("label")
+                    deberta_label = result["models"]["deberta"]
+                    roberta_label = result["models"]["roberta"]
 
-                        # Logic to determine the final label based on DeBERTa and RoBERTa outputs
-                        # priority to DeBERTa
-                        # - Both 0 → label = 0
-                        # - DeBERTa = 0, RoBERTa = 1 → label = 0
-                        # - DeBERTa = 1, RoBERTa = 0 → label = 1
-                        # - Both 1 → label = 1
+                    # Logic to determine the final label based on DeBERTa and RoBERTa outputs
+                    # priority to DeBERTa
+                    # - Both 0 → label = 0
+                    # - DeBERTa = 0, RoBERTa = 1 → label = 0
+                    # - DeBERTa = 1, RoBERTa = 0 → label = 1
+                    # - Both 1 → label = 1
 
-                        if deberta_label == 1:
-                            label = 1
-                        else:
-                            label = 0
+                    if deberta_label == 1:
+                        label = 1
+                    else:
+                        label = 0
 
-                        if label == 1 and roberta_label == 0:
-                            st.success("⚠️ Our AI models predict this claim is likely **TRUE**.")
-                            st.write("⚠️ But be aware DeBERTa model suggests this claim is likely **False**.")
-                        elif label == 0 and roberta_label == 1:
-                            st.warning("⚠️ Our AI models predict this claim is likely **FALSE**.")
-                            st.write("⚠️ But be aware DeBERTa model suggests this claim is likely **True**.")
-                        elif label == 1 and roberta_label == 1:
-                            st.success("✅ Our AI models suggest this claim is likely **TRUE**.")
-                        elif label == 0 and roberta_label == 0:
-                            st.error("❌ Our AI models suggest this claim is likely **FALSE**.")
-                        else:
-                            st.error("❌ Our AI models suggest this claim is likely **FALSE**.")
+                    if label == 1 and roberta_label == 0:
+                        st.success("⚠️ Our AI models predict this claim is likely **TRUE**.")
+                        st.write("⚠️ But be aware DeBERTa model suggests this claim is likely **False**.")
+                    elif label == 0 and roberta_label == 1:
+                        st.warning("⚠️ Our AI models predict this claim is likely **FALSE**.")
+                        st.write("⚠️ But be aware DeBERTa model suggests this claim is likely **True**.")
+                    elif label == 1 and roberta_label == 1:
+                        st.success("✅ Our AI models suggest this claim is likely **TRUE**.")
+                    elif label == 0 and roberta_label == 0:
+                        st.error("❌ Our AI models suggest this claim is likely **FALSE**.")
+                    else:
+                        st.error("❌ Our AI models suggest this claim is likely **FALSE**.")
 
-                        st.caption("🧠 Model Details:")
-                        st.markdown(f"- **DeBERTa**: {'True' if deberta_label == 1 else 'False'}")
-                        st.markdown(f"- **RoBERTa**: {'True' if roberta_label == 1 else 'False'}")
-                        st.write(f"🔍 NLP label = {label}")
-                        # Save the claim check result to the database
-                        save_check(claim_query, label, "roberta+deberta")
-                        
+                    st.caption("🧠 Model Details:")
+                    st.markdown(f"- **DeBERTa**: {'True' if deberta_label == 1 else 'False'}")
+                    st.markdown(f"- **RoBERTa**: {'True' if roberta_label == 1 else 'False'}")
+                    st.write(f"🔍 NLP label = {label}")
+                    # Save the claim check result to the database
+                    save_check(claim_query, label, "roberta+deberta")
                     
+                
 
-                        # if label == 1:
-                        #     st.success("✅ NLP (DeBERTa + RoBERTa) predicts this claim is likely **True**")
-                        # else:
-                        #     st.error("❌ NLP (DeBERTa + RoBERTa) predicts this claim is likely **False**")
+                    # if label == 1:
+                    #     st.success("✅ NLP (DeBERTa + RoBERTa) predicts this claim is likely **True**")
+                    # else:
+                    #     st.error("❌ NLP (DeBERTa + RoBERTa) predicts this claim is likely **False**")
 
 
-                        # st.caption("🧠 NLP model outputs (debug):")
-                        # st.json(result)
+                    # st.caption("🧠 NLP model outputs (debug):")
+                    # st.json(result)
 
+                except requests.exceptions.RequestException as e:
+                    st.error(f"❌ API error: {e}")
                 except requests.exceptions.Timeout:
                     st.warning("⏳ Google Fact Check API timed out.")
                     use_nlp = True

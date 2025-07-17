@@ -7,7 +7,7 @@ import sys
 import json
 #from transformers import RobertaTokenizer, RobertaForSequenceClassification , DebertaV2Tokenizer
 from pydantic import BaseModel
-from kafka import KafkaProducer, KafkaConsumer
+from kafka import KafkaProducer, KafkaConsumer, TopicPartition
 from .fetch_news import router as fetch_news_router
 import time
 import uuid
@@ -150,15 +150,19 @@ async def check_claim_kafka(data: ClaimRequest):
 
     return result
 
-def wait_for_nlp_response(claim_id, timeout=10):
+def wait_for_nlp_response(claim_id, timeout=20):
+    topic='manual_results'
     consumer = KafkaConsumer(
-        'manual_results',
         bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"),
-        auto_offset_reset='earliest',
+        auto_offset_reset='latest',
         enable_auto_commit=False,
-        group_id='api-waiter',
+        group_id=f'api-waiter-{claim_id}',
         value_deserializer=lambda x: json.loads(x.decode('utf-8'))
     )
+    # Read only from latest messages
+    tp = TopicPartition(topic, 0)
+    consumer.assign([tp])
+    consumer.seek_to_end(tp)
 
     start = time.time()
     for msg in consumer:
@@ -167,3 +171,6 @@ def wait_for_nlp_response(claim_id, timeout=10):
             return result
         if time.time() - start > timeout:
             return None
+        
+    consumer.close()
+    return None

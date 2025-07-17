@@ -9,8 +9,10 @@ import json, os, sys
 import threading
 
 
-# Set device: GPU if available, else CPU
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Set device: GPU if available, else CPU if Linux or MacOS
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #linux 
+device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")  # mac
+
 #print(f"Using device: {device}")
 
 # Flush stdout logs immediately
@@ -26,6 +28,17 @@ deberta_tokenizer = DebertaV2Tokenizer.from_pretrained("microsoft/deberta-v3-lar
 deberta_model = DebertaV2ForSequenceClassification.from_pretrained("microsoft/deberta-v3-large")
 deberta_model.eval()
 
+# Uncomment the following lines if you have a local DeBERTa model
+# This is useful if you have fine-tuned your model and saved it locally.
+# # Load DeBERTa model
+# deberta_model = DebertaV2ForSequenceClassification.from_pretrained(
+#     "/app/ds_results", local_files_only=True
+# )
+# deberta_tokenizer = DebertaV2Tokenizer.from_pretrained(
+#     "/app/ds_results", local_files_only=True
+# )
+# deberta_model.eval()
+
 # Load RoBERTa-based fact-check model
 tokenizer = RobertaTokenizer.from_pretrained('Dzeniks/roberta-fact-check')
 fact_model = RobertaForSequenceClassification.from_pretrained('Dzeniks/roberta-fact-check')
@@ -38,16 +51,33 @@ fact_model.eval()
 
 def score_claims_with_deberta(sentences, evidence):
     results = []
+    threshold = 0.6 # Confidence threshold to consider a claim as true 
     for sentence in sentences:
         x = deberta_tokenizer.encode_plus(sentence, evidence, return_tensors="pt", truncation=True)
+        x = {k: v.to(device) for k, v in x.items()}
         with torch.no_grad():
             prediction = deberta_model(**x)
-            probs = torch.nn.functional.softmax(prediction.logits, dim=1)
+            logits = prediction.logits
+            probs = torch.nn.functional.softmax(logits, dim=1)
         label = torch.argmax(prediction.logits, dim=1).item()
         confidence = probs.max().item()
+
+        # with a trained model, we can adjust the label based on confidence
+        # Adjust label based on confidence threshold
+        if label == 1 and confidence < threshold:
+            adjusted_label = 0
+        else:
+            adjusted_label = label
+
+        # # but for now we just return the label and confidence
+        # if confidence < threshold:
+        #     adjusted_label = -1  # claim incerta
+        # else:
+        #     adjusted_label = label
+
         results.append({
             "text": sentence,
-            "label": label,
+            "label": adjusted_label,
             "confidence": round(confidence, 2)
         })
     return results
@@ -64,9 +94,13 @@ def score_claims_with_roberta(sentences, evidence):
     results = []
     for sentence in sentences:
         x = tokenizer.encode_plus(sentence, evidence, return_tensors="pt", truncation=True)
+        x = {k: v.to(device) for k, v in x.items()}
         with torch.no_grad():
             prediction = fact_model(**x)
+            logits = prediction.logits
+            probs = torch.nn.functional.softmax(logits, dim=1)
         label = torch.argmax(prediction.logits, dim=1).item()
+        confidence = probs.max().item()
         results.append({
             "text": sentence,
             "label": label
@@ -143,66 +177,13 @@ def handle_cleaned_doc():
 
         # Store in Elasticsearch
         try:
+            es.indices.create(index="news_facts", ignore=400)
             es.index(index="news_facts", id=doc["id"], body=nlp_output)
             print(f"NLP: {doc['id']} - {len(flagged_claims)} false claims flagged", flush=True)
         except Exception as e:
             print(f"❌ Indexing error for {doc['id']}: {e}", flush=True)
 
-        # consumer = KafkaConsumer("manual_claims", ...)
-        # producer = KafkaProducer(...)
-
-        # for msg in consumer:
-        #     claim = msg.value
-        #     result = {
-        #         "id": claim["id"],
-        #         "text": claim["claim"],
-        #         "label": ...,  # risultato finale
-        #         "model": "roberta + deberta"
-        #     }
-        #     producer.send("manual_results", result)
-
-# manual_consumer = KafkaConsumer(
-#     'manual_claims',
-#     bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"),
-#     auto_offset_reset='earliest',
-#     enable_auto_commit=True,
-#     group_id='nlp-manual',
-#     value_deserializer=lambda x: json.loads(x.decode('utf-8'))
-# )
-
-# for msg in manual_consumer:
-#     claim = msg.value
-#     claim_text = claim["claim"]
-#     evidence = claim.get("evidence", "")
-
-#     # Apply DeBERTa
-#     deberta_x = deberta_tokenizer.encode_plus(claim_text, evidence, return_tensors="pt", truncation=True)
-#     with torch.no_grad():
-#         deberta_pred = deberta_model(**deberta_x)
-#         deberta_label = torch.argmax(deberta_pred.logits, dim=1).item()
-
-#     # Apply RoBERTa
-#     roberta_x = tokenizer.encode_plus(claim_text, evidence, return_tensors="pt", truncation=True)
-#     with torch.no_grad():
-#         roberta_pred = fact_model(**roberta_x)
-#         roberta_label = torch.argmax(roberta_pred.logits, dim=1).item()
-
-#     final_label = 0 if deberta_label == 0 or roberta_label == 0 else 1
-
-#     result = {
-#         "id": claim["id"],
-#         "claim": claim_text,
-#         "label": final_label,
-#         "models": {
-#             "deberta": deberta_label,
-#             "roberta": roberta_label
-#         }
-#     }
-
-    # producer.send("manual_results", result)
-    # print(f"NLP → ✅ Result for manual claim {claim['id']} sent", flush=True)
-
-
+# Function to handle manual claims from Kafka
 def handle_manual_claims():
     manual_consumer = KafkaConsumer(
         'manual_claims',
@@ -217,44 +198,40 @@ def handle_manual_claims():
     for msg in manual_consumer:
         claim = msg.value
         claim_text = claim["claim"]
-        evidence = claim.get("evidence", "") or claim_text  # fallback
+        #evidence = claim.get("evidence", "") or claim_text  # fallback
+        evidence = get_best_evidence(claim_text)  # Get best evidence from Elasticsearch
 
         # DeBERTa
-        deberta_x = deberta_tokenizer.encode_plus(claim_text, evidence, return_tensors="pt", truncation=True)
-        with torch.no_grad():
-            deberta_pred = deberta_model(**deberta_x)
-            deberta_label = torch.argmax(deberta_pred.logits, dim=1).item()
+        deberta_results = score_claims_with_deberta([claim_text], evidence)
+        deberta_label = deberta_results[0]["label"]
+        deberta_confidence = deberta_results[0]["confidence"]
+
 
         # RoBERTa
-        roberta_x = tokenizer.encode_plus(claim_text, evidence, return_tensors="pt", truncation=True)
-        with torch.no_grad():
-            roberta_pred = fact_model(**roberta_x)
-            roberta_label = torch.argmax(roberta_pred.logits, dim=1).item()
+        roberta_results = score_claims_with_roberta([claim_text], evidence)
+        roberta_label = roberta_results[0]["label"]
 
         #final_label = 0 if deberta_label == 0 or roberta_label == 0 else 1
+        # Debugging output
+        print("🔍 DEBUG CLAIM INFERENCE")
+        print(f"📌 Claim: {claim_text}")
+        print(f"📚 Evidence: {evidence}")
+        print(f"✅ Labels: DeBERTa={deberta_label}, RoBERTa={roberta_label}")
+        print(f"🔎 Confidence: DeBERTa={deberta_confidence:.2f}")
+
 
         # Give priority to DeBERTa, if it says false, we trust it
-        if deberta_label == 0 and roberta_label == 0:
+        if deberta_label == 1:
+            final_label = 1
+            reason = "✅ DeBERTa predicted True (priority model)"
+        elif roberta_label == 1:
+            final_label = 1
+            reason = "⚠️ DeBERTa=False, but RoBERTa predicted True"
+        else:
             final_label = 0
             reason = "❌ Both models predicted False"
-        elif deberta_label != roberta_label:
-            final_label = 0
-            reason = f"⚠️ Conflict: DeBERTa={deberta_label}, RoBERTa={roberta_label}. Defaulting to False."
-        else:
-            final_label = 1
-            reason = "✅ Both models predicted True"
 
 
-
-        # result = {
-        #     "id": claim["id"],
-        #     "claim": claim_text,
-        #     "label": final_label,
-        #     "models": {
-        #         "deberta": deberta_label,
-        #         "roberta": roberta_label
-        #     }
-        # }
         result = {
             "id": claim["id"],
             "claim": claim_text,
@@ -268,6 +245,25 @@ def handle_manual_claims():
 
         producer.send("manual_results", result)
         print(f"📤 NLP sent result for manual claim {claim['id']}", flush=True)
+
+# Function to get best evidence from Elasticsearch
+def get_best_evidence(claim_text):
+    try:
+        query = {
+            "query": {
+                "match": {
+                    "content": claim_text
+                }
+            },
+            "size": 1
+        }
+        res = es.search(index="news_facts", body=query)
+        if res["hits"]["hits"]:
+            return res["hits"]["hits"][0]["_source"].get("content", claim_text)
+    except Exception as e:
+        print(f"⚠️ Elasticsearch error: {e}")
+    return claim_text  # fallback
+
 
 
 if __name__ == "__main__":
