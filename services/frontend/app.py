@@ -1,46 +1,62 @@
+"""
+frontend_app.py
+
+This script implements the Streamlit-based UI for the fact-checking system.
+It provides an interactive interface for users to:
+- Submit claims and receive verification using either Google Fact Check API or internal NLP models (DeBERTa + RoBERTa)
+- View a history of all verified claims stored in DuckDB
+- Load and explore filtered news articles and see flagged claims or fact-check results
+
+It acts as a front layer to the backend FastAPI service and communicates via HTTP.
+
+Modules:
+- Tab 1: Submit and verify claims
+- Tab 2: View and manage verification history
+- Tab 3: Fetch and inspect filtered news with inline fact-check support
+"""
 import streamlit as st
 import requests
 import os
 import urllib.parse  # Needed for URL-safe query
 import time
-import torch
+#import torch
 import sys
+
+# Adjust sys path to allow service import
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 from services.database.claims_db import save_check, init_db, load_history, clear_history
 
+# === Custom UI Styles ===
 def local_css(file_name):
+    """Inject custom CSS into the Streamlit app."""
     with open(file_name) as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 # Percorso relativo alla posizione dello script
 local_css("style_front.css")
 
+# === App Metadata ===
 st.set_page_config(page_title="Fact Checking Dashboard", layout="wide")
 st.title("Fact Checking Dashboard")
 
+# === Session Initialization ===
 if "claim_checked" not in st.session_state:
     st.session_state.claim_checked = False
 
-
+# Create DuckDB table if not existing
 init_db()
 
-# if "DOCKER" in os.environ:
-#     api_url = "http://api:8000"
-# else:
-#     api_url = "http://localhost:8000"
+# === API Endpoint Setup ===
 api_url = os.getenv("API_URL", "http://localhost:8000")
 
-# Create tabs for different sections of the app
+# Create interface tabs for different sections of the app
 tab1, tab2, tab3 = st.tabs(["✅ Check Claim", "📜 History of Checked Claims", "📰 Load Filtered News"])
 
 language = "en"
 
-# to verify what streamlit is seeing
-#st.sidebar.write("🔍 API_URL from env:", api_url)
-
-# --- Section: Latest News with Fact Check ---
-
-# # --- Section: Manual Claim Check ---
+# =============================
+# TAB 1 — Manual Claim Submission
+# =============================
 with tab1:
     st.header("Verify a Claim")
 
@@ -184,15 +200,11 @@ with tab1:
                     use_nlp = True
                 except Exception as e:
                     st.error(f"Error checking claim: {e}")
-                            # Button to new check 
-            # if st.button("🔁 New Check"):
-            #     st.session_state.claim_checked = False
-            #     if "claim_input" in st.session_state:
-            #         del st.session_state["claim_input"]
-            #     st.rerun()
 
-# Display the current API URL in the sidebar
-#st.sidebar.markdown(f"🌐 API_URL: `{api_url}`")
+
+# =============================
+# TAB 2 — Manual Claim History
+# =============================
 
 with tab2:
     db_path = os.getenv("DB_PATH", "/app/services/database/claim_history.duckdb")
@@ -229,7 +241,9 @@ with tab2:
         except Exception as e:  
             st.error(f"❌ Failed to clear history: {e}")
 
-#st.header("Latest News")
+# =============================
+# TAB 3 — Filtered News Viewer
+# =============================
 with tab3:
     # --- Section: Filters ---
     st.markdown("""
@@ -315,8 +329,6 @@ with tab3:
 
 
                     st.markdown("---")
-
-
 
         except Exception as e:
             st.error(f"Failed to fetch news: {e}")

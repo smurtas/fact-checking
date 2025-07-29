@@ -1,3 +1,27 @@
+"""
+nlp_service.py
+
+This is the **NLP microservice** for the fact-checking system.
+
+Responsibilities:
+- Ingest cleaned news articles from Kafka
+- Break articles into sentences and run claim verification using:
+    - DeBERTa (for priority scoring)
+    - RoBERTa (as secondary validator)
+- Process manual claims from users via Kafka
+- Store fact-checked results in Elasticsearch
+- Stream results back to the pipeline via Kafka
+
+Key Features:
+- Multi-model NLP pipeline with DeBERTa + RoBERTa
+- Real-time Kafka integration for automated and manual processing
+- Scalable and concurrent using threads
+- Embedding and evidence search through Elasticsearch
+
+Dependencies:
+- HuggingFace Transformers, SentenceTransformers, Spacy, Elasticsearch, Kafka-Python
+"""
+
 from kafka import KafkaConsumer, KafkaProducer
 from sentence_transformers import SentenceTransformer
 from elasticsearch import Elasticsearch
@@ -21,6 +45,8 @@ sys.stdout.reconfigure(line_buffering=True)
 # Load NLP tools
 nlp_spacy = spacy.load("en_core_web_sm")
 embedding_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+
+# Elasticsearch instance (used for evidence retrieval and news storage)
 es = Elasticsearch("http://elasticsearch:9200")
 
 # Load DeBERTa model
@@ -51,7 +77,8 @@ fact_model.eval()
 
 def score_claims_with_deberta(sentences, evidence):
     results = []
-    threshold = 0.6 # Confidence threshold to consider a claim as true 
+    threshold = 0.8 # Confidence threshold to consider a claim as true 
+
     for sentence in sentences:
         x = deberta_tokenizer.encode_plus(sentence, evidence, return_tensors="pt", truncation=True)
         x = {k: v.to(device) for k, v in x.items()}
@@ -92,18 +119,30 @@ def score_claims_with_roberta(sentences, evidence):
     Label 0 = False, 1 = True
     """
     results = []
+    threshold = 0.8  # Confidence threshold for True prediction
+
     for sentence in sentences:
         x = tokenizer.encode_plus(sentence, evidence, return_tensors="pt", truncation=True)
         x = {k: v.to(device) for k, v in x.items()}
+        
         with torch.no_grad():
             prediction = fact_model(**x)
             logits = prediction.logits
             probs = torch.nn.functional.softmax(logits, dim=1)
+
         label = torch.argmax(prediction.logits, dim=1).item()
         confidence = probs.max().item()
+                
+        # Apply threshold for label adjustment
+        if label == 1 and confidence < threshold:
+            adjusted_label = 0
+        else:
+            adjusted_label = label
+            
         results.append({
             "text": sentence,
-            "label": label
+            "label": label, 
+            "confidence": round(confidence, 2)
         })
     return results
 
@@ -124,6 +163,14 @@ producer = KafkaProducer(
 
 # Main pipeline
 def handle_cleaned_doc():
+    """
+    Main NLP processing loop for articles:
+    - Extracts sentences using spaCy
+    - Runs DeBERTa on all
+    - Flags suspect claims (False) for further validation with RoBERTa
+    - Merges flagged claims, generates embeddings
+    - Saves output in Elasticsearch and pushes to Kafka
+    """
     for msg in consumer:
         doc = msg.value
         content = doc.get('content', '')
@@ -185,6 +232,13 @@ def handle_cleaned_doc():
 
 # Function to handle manual claims from Kafka
 def handle_manual_claims():
+    """
+    Handles manual claims submitted by the user.
+    - Retrieves best evidence via Elasticsearch
+    - Runs DeBERTa and RoBERTa on the claim
+    - Combines results with rule-based logic
+    - Sends the result back through Kafka
+    """
     manual_consumer = KafkaConsumer(
         'manual_claims',
         bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"),
@@ -210,6 +264,7 @@ def handle_manual_claims():
         # RoBERTa
         roberta_results = score_claims_with_roberta([claim_text], evidence)
         roberta_label = roberta_results[0]["label"]
+        roberta_confidence = roberta_results[0]["confidence"]
 
         #final_label = 0 if deberta_label == 0 or roberta_label == 0 else 1
         # Debugging output
@@ -218,6 +273,7 @@ def handle_manual_claims():
         print(f"📚 Evidence: {evidence}")
         print(f"✅ Labels: DeBERTa={deberta_label}, RoBERTa={roberta_label}")
         print(f"🔎 Confidence: DeBERTa={deberta_confidence:.2f}")
+        print(f"🔎 Confidence: RoBERTa={roberta_confidence:.2f}")
 
 
         # Give priority to DeBERTa, if it says false, we trust it
@@ -248,6 +304,10 @@ def handle_manual_claims():
 
 # Function to get best evidence from Elasticsearch
 def get_best_evidence(claim_text):
+    """
+    Uses Elasticsearch to retrieve the most relevant article (evidence)
+    for the given claim based on content similarity.
+    """
     try:
         query = {
             "query": {
@@ -267,6 +327,10 @@ def get_best_evidence(claim_text):
 
 
 if __name__ == "__main__":
+    """
+    Starts both Kafka consumers (cleaned_doc + manual_claims) in separate threads.
+    Enables parallel processing of both real-time article ingestion and user-submitted claims.
+    """
     print("🚀 Starting NLP microservice listeners...", flush=True)
 
     t1 = threading.Thread(target=handle_cleaned_doc)
