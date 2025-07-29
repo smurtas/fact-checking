@@ -8,7 +8,7 @@ import json
 #from transformers import RobertaTokenizer, RobertaForSequenceClassification , DebertaV2Tokenizer
 from pydantic import BaseModel
 from kafka import KafkaProducer, KafkaConsumer, TopicPartition
-from .fetch_news import router as fetch_news_router
+#from .fetch_news import router as fetch_news_router
 import time
 import uuid
 from services.database.claims_db import save_check , init_db # to save the claim check results

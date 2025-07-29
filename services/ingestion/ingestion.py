@@ -24,8 +24,12 @@ consumer = KafkaConsumer(
 
 # Function to generate a unique ID for each article
 def generate_id(article):
-    unique_string = article["title"] + article["publishedAt"]
-    return hashlib.md5(unique_string.encode("utf-8")).hexdigest()
+    # unique_string = article["title"] + article["publishedAt"]
+    # return hashlib.md5(unique_string.encode("utf-8")).hexdigest()
+    title = article.get("title") or ""
+    published = article.get("publishedAt") or ""
+    unique_string = title + published
+    return hashlib.md5(unique_string.encode()).hexdigest()
 
 def fetch_news(api_key, topic):
     url = "https://newsapi.org/v2/everything"
