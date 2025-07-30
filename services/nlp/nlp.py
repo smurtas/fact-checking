@@ -346,7 +346,7 @@ def handle_manual_claims():
         print(f"🔎 Confidence: DeBERTa={deberta_confidence:.2f}")
         print(f"🔎 Confidence: RoBERTa={roberta_confidence:.2f}")
         print(f"📤 Sent manual claim result for {claim['id']} with final label={final_label}", flush=True)
-        print(f"[🧠 RoBERTa raw label]: {roberta_results[0]['raw_label']} — confidence: {roberta_confidence}")
+        print(f"[🧠 RoBERTa label]: {roberta_results[0]['label']} — confidence: {roberta_confidence}")
 
 
         result = {
